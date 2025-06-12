@@ -54,23 +54,19 @@ def main():
         if missing:
             raise ValueError(f"Missing environment variables: {', '.join(missing)}")
 
-        # Connect to database
-        conn = psycopg2.connect(
-            host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS
-        )
-        cur = conn.cursor()
-
-        # Execute query
+        # Connect to database and execute query
         query = sql.SQL("SELECT {}, {}, {} FROM {}").format(
             sql.Identifier(ID_COLUMN),
             sql.Identifier(VALUE_COLUMN),
             sql.Identifier(UPDATEDON_COLUMN),
             sql.Identifier(TABLE_NAME),
         )
-        cur.execute(query)
-        rows = cur.fetchall()
-        cur.close()
-        conn.close()
+        with psycopg2.connect(
+            host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(query)
+                rows = cur.fetchall()
 
         # Build metrics
         metric_prefix = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
