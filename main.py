@@ -72,8 +72,8 @@ def main():
                 if value is not None:
                     lines.append(f'{value_metric}{{id="{sanitized_id}"}} {value}')
                     metrics_count += 1
-                # Send updatedon metric only if updatedon is not None
-                if updatedon is not None:
+                # Send updatedon metric only if updatedon is not None and is datetime
+                if updatedon is not None and isinstance(updatedon, datetime):
                     updatedon_ts = int(updatedon.timestamp())
                     lines.append(f'{updatedon_metric}{{id="{sanitized_id}"}} {updatedon_ts}')
                     metrics_count += 1
