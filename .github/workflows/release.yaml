@@ -1,0 +1,41 @@
+name: "Release"
+
+"on":
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: "Release"
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4.1.6
+        with:
+          token: ${{ secrets.PAT }}
+          fetch-depth: 0
+
+      - name: Get Next Version
+        id: semver
+        uses: ietf-tools/semver-action@v1.10.1
+        with:
+          token: ${{ github.token }}
+          branch: main
+          noVersionBumpBehavior: silent
+          noNewCommitBehavior: silent
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1.16.0
+        with:
+          allowUpdates: true
+          draft: false
+          makeLatest: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: ${{ steps.semver.outputs.next }}
+        if: ${{ steps.semver.outputs.next != '' }}
