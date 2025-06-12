@@ -277,13 +277,36 @@ def get_metric_labels(job_name: str) -> str:
         base_labels.append(extra)
     return ",".join(base_labels)
 
+def validate_numeric_param(name: str, value: str, min_val: int = 1, max_val: int = 300) -> int:
+    """Validate numeric parameter from environment variable.
+    
+    Args:
+        name: Parameter name for error messages
+        value: Parameter value to validate
+        min_val: Minimum allowed value
+        max_val: Maximum allowed value
+        
+    Returns:
+        Validated integer value
+        
+    Raises:
+        SystemExit: If value is invalid or out of range
+    """
+    try:
+        val = int(value)
+        if val < min_val or val > max_val:
+            fail_and_exit(f"Invalid {name}: {val}. Must be between {min_val} and {max_val}")
+        return val
+    except ValueError:
+        fail_and_exit(f"Invalid {name}: {value}. Must be a number")
+
 # Required environment variables
 DB_CONN = get_env_or_exit("DB_CONN")
 TABLE_NAME = validate_sql_identifier(get_env_or_exit("TABLE_NAME"))
 PUSHGATEWAY_URL = get_env_or_exit("PUSHGATEWAY_URL")
 ID_FIELD = validate_sql_identifier(get_env_or_exit("ID_FIELD"))
 VALUE_FIELD = validate_sql_identifier(get_env_or_exit("VALUE_FIELD"))
-UPDATEDON_FIELD = validate_sql_identifier(get_env_or_exit("UPDATEDON_FIELD"))
+UPDATEDON_FIELD = validate_env_or_exit("UPDATEDON_FIELD")
 
 # Get database name first
 DB_NAME = get_db_name_from_conn(DB_CONN)
@@ -325,29 +348,6 @@ QUERY = sql.SQL("SELECT {id}, {val}, {upd} FROM {tbl}").format(
     upd=sql.Identifier(UPDATEDON_FIELD),
     tbl=sql.Identifier(TABLE_NAME)
 )
-
-def validate_numeric_param(name: str, value: str, min_val: int = 1, max_val: int = 300) -> int:
-    """Validate numeric parameter from environment variable.
-    
-    Args:
-        name: Parameter name for error messages
-        value: Parameter value to validate
-        min_val: Minimum allowed value
-        max_val: Maximum allowed value
-        
-    Returns:
-        Validated integer value
-        
-    Raises:
-        SystemExit: If value is invalid or out of range
-    """
-    try:
-        val = int(value)
-        if val < min_val or val > max_val:
-            fail_and_exit(f"Invalid {name}: {val}. Must be between {min_val} and {max_val}")
-        return val
-    except ValueError:
-        fail_and_exit(f"Invalid {name}: {value}. Must be a number")
 
 def fetch_rows(conn: psycopg2.extensions.connection) -> List[Tuple]:
     """Fetch rows from the specified table.
@@ -598,36 +598,49 @@ def signal_handler(signum, frame) -> None:
     sys.exit(0)
 
 def main() -> None:
-    """Main function that orchestrates the entire process."""
+    """Main function that orchestrates DB fetching, metrics generation, and push."""
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    start_time = time.time()
-    db_connection_duration = 0.0
-
     log_event("job_started")
 
-    try:
-        db_connect_start = time.time()
-        with psycopg2.connect(DB_CONN, connect_timeout=DB_TIMEOUT) as conn:
+    start_scrape = time.time()
+
+    db_connect_start = time.time()
+    conn = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            conn = psycopg2.connect(DB_CONN, connect_timeout=DB_TIMEOUT)
             db_connection_duration = time.time() - db_connect_start
             log_event("db_connected", duration=db_connection_duration)
-            rows = fetch_rows(conn)
-            log_event("rows_fetched", count=len(rows))
-    except Exception as e:
-        log_event("db_error", error=str(e), exc_info=True)
-        fail_and_exit(f"Failed to connect to database or fetch data: {e}", exc_info=True)
-
-    duration = time.time() - start_time
-    metrics_text, skipped = generate_metrics_text(rows, duration, db_connection_duration)
-    log_event("metrics_generated", duration=duration, skipped_rows=skipped)
+            break
+        except psycopg2.OperationalError as e:
+            logger.warning(f"Database connection attempt {attempt} failed: {e}")
+            if attempt == MAX_RETRIES:
+                fail_and_exit("Exceeded max retries connecting to DB", e)
+            sleep_time = RETRY_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
+            logger.info(f"Retrying DB connection after {sleep_time:.2f} seconds...")
+            time.sleep(sleep_time)
+    else:
+        # If loop exhausted without break (should not happen due to fail_and_exit)
+        fail_and_exit("Failed to connect to DB")
 
     try:
+        rows = fetch_rows(conn)
+        scrape_duration = time.time() - start_scrape
+
+        metrics_text, skipped_rows = generate_metrics_text(rows, scrape_duration, db_connection_duration)
+        log_event("metrics_generated", rows_fetched=len(rows), skipped_rows=skipped_rows)
+
         push_metrics(PUSHGATEWAY_URL, JOB_NAME, metrics_text)
-        log_event("job_completed", duration=time.time() - start_time)
+
+        log_event("job_finished", duration=time.time() - start_scrape)
     except Exception as e:
-        log_event("job_failed", error=str(e), duration=time.time() - start_time, exc_info=True)
+        log_event("job_failed", error=str(e), duration=time.time() - start_scrape, exc_info=True)
         raise
+    finally:
+        if conn:
+            conn.close()
 
 if __name__ == "__main__":
     main()
