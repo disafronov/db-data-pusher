@@ -99,9 +99,6 @@ def main():
         count = 1  # total_rows metric
 
         for id_, value, updatedon in rows:
-            if not id_:
-                logger.warning("Skipping row with empty ID")
-                continue
             sid = sanitize(str(id_))
             if value is not None:
                 lines.append(f'{DEFAULT_NAME}_value{{id="{sid}"}} {value}')
