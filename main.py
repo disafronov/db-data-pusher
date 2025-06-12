@@ -16,6 +16,15 @@ def sanitize(name: str) -> str:
     """Replace non-alphanumeric chars with underscore."""
     return re.sub(r'[^a-zA-Z0-9_]', '_', str(name))
 
+def delete_old_metrics(pushgateway_url: str, job: str) -> None:
+    """Delete old metrics for the given job across all instances."""
+    url = f"{pushgateway_url}/metrics/job/{job}"
+    try:
+        requests.delete(url)
+        print(f"Deleted old metrics for job={job}")
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to delete old metrics: {e}")
+
 def main():
     # Get required env vars
     DB_HOST = os.getenv("DB_HOST")
@@ -74,8 +83,12 @@ def main():
             lines.append(f'{updatedon_metric}{{id="{sanitized_id}"}} {updatedon_ts}')
             metrics_count += 1
 
+    # Delete old metrics before pushing new ones
+    job_name = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
+    delete_old_metrics(PUSHGATEWAY_URL, job_name)
+
     # Push metrics
-    url = f"{PUSHGATEWAY_URL}/metrics/job/{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}/instance/{sanitize(INSTANCE)}"
+    url = f"{PUSHGATEWAY_URL}/metrics/job/{job_name}/instance/{sanitize(INSTANCE)}"
     requests.post(url, data="\n".join(lines) + "\n")
 
     print(f"Pushed {metrics_count} metrics")
