@@ -8,8 +8,16 @@ import sys
 import psycopg2
 import requests
 import re
+import logging
 from psycopg2 import sql
 from datetime import datetime
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 def sanitize(name: str) -> str:
     """Replace non-alphanumeric chars with underscore."""
@@ -32,6 +40,21 @@ def main():
         DEFAULT_NAME = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
         JOB_NAME = sanitize(os.getenv("JOB_NAME", DEFAULT_NAME))
         INSTANCE_NAME = sanitize(os.getenv("INSTANCE_NAME", JOB_NAME))
+
+        # Validate required environment variables
+        required_env = {
+            "DB_HOST": DB_HOST,
+            "DB_NAME": DB_NAME,
+            "DB_USER": DB_USER,
+            "DB_PASS": DB_PASS,
+            "TABLE_NAME": TABLE_NAME,
+            "PUSHGATEWAY_URL": PUSHGATEWAY_URL,
+            "INSTANCE": INSTANCE
+        }
+
+        missing = [k for k, v in required_env.items() if not v]
+        if missing:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 
         # Connect to DB
         conn = psycopg2.connect(
@@ -84,17 +107,18 @@ def main():
 
             # Push metrics
             url = f"{PUSHGATEWAY_URL}/metrics/job/{JOB_NAME}/instance/{INSTANCE_NAME}"
+            logger.info(f"Pushing metrics to: {url}")
             response = requests.post(url, data="\n".join(lines) + "\n")
             response.raise_for_status()
 
-            print(f"Pushed {metrics_count} metrics")
+            logger.info(f"Pushed {metrics_count} metrics")
 
         finally:
             cur.close()
             conn.close()
 
     except Exception as e:
-        print(f"Error: {str(e)}", file=sys.stderr)
+        logger.error(f"Error: {str(e)}")
         sys.exit(1)
 
 if __name__ == "__main__":
