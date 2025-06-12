@@ -49,6 +49,43 @@ DEFAULT_TIMEOUT = 5
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_RETRY_DELAY = 1
 PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4"
+DEFAULT_MAX_ROWS = 10000
+
+# Metric names
+DB_CONNECT_SUCCESS_METRIC = 'db_connect_success'
+DB_CONNECTION_DURATION_METRIC = 'db_connection_duration_seconds'
+ROWS_COUNT_METRIC = 'rows_count'
+VALUE_METRIC = 'value'
+UPDATEDON_METRIC = 'updatedon'
+SCRAPE_SUCCESS_METRIC = 'scrape_success'
+SKIPPED_ROWS_METRIC = 'skipped_rows'
+SCRAPE_DURATION_METRIC = 'scrape_duration_seconds'
+LAST_SUCCESSFUL_SCRAPE_METRIC = 'last_successful_scrape_timestamp'
+PUSH_ERRORS_METRIC = 'push_errors_total'
+
+# Metric HELP and TYPE comments
+METRIC_HELP_AND_TYPE = [
+    f'# HELP {DB_CONNECT_SUCCESS_METRIC} Whether the database connection was successful',
+    f'# TYPE {DB_CONNECT_SUCCESS_METRIC} gauge',
+    f'# HELP {DB_CONNECTION_DURATION_METRIC} Time taken to connect to the database in seconds',
+    f'# TYPE {DB_CONNECTION_DURATION_METRIC} gauge',
+    f'# HELP {ROWS_COUNT_METRIC} Number of rows fetched',
+    f'# TYPE {ROWS_COUNT_METRIC} gauge',
+    f'# HELP {VALUE_METRIC} Value field from database',
+    f'# TYPE {VALUE_METRIC} gauge',
+    f'# HELP {UPDATEDON_METRIC} Timestamp of last update (Unix timestamp)',
+    f'# TYPE {UPDATEDON_METRIC} gauge',
+    f'# HELP {SCRAPE_SUCCESS_METRIC} Whether scraping was successful',
+    f'# TYPE {SCRAPE_SUCCESS_METRIC} gauge',
+    f'# HELP {SKIPPED_ROWS_METRIC} Number of rows skipped due to parsing errors',
+    f'# TYPE {SKIPPED_ROWS_METRIC} gauge',
+    f'# HELP {SCRAPE_DURATION_METRIC} Duration of scraping in seconds',
+    f'# TYPE {SCRAPE_DURATION_METRIC} gauge',
+    f'# HELP {LAST_SUCCESSFUL_SCRAPE_METRIC} Timestamp of last successful scrape',
+    f'# TYPE {LAST_SUCCESSFUL_SCRAPE_METRIC} gauge',
+    f'# HELP {PUSH_ERRORS_METRIC} Total number of push errors',
+    f'# TYPE {PUSH_ERRORS_METRIC} counter',
+]
 
 # Database connection patterns
 DB_NAME_PATTERNS = [
@@ -248,29 +285,38 @@ ID_FIELD = validate_sql_identifier(get_env_or_exit("ID_FIELD"))
 VALUE_FIELD = validate_sql_identifier(get_env_or_exit("VALUE_FIELD"))
 UPDATEDON_FIELD = validate_sql_identifier(get_env_or_exit("UPDATEDON_FIELD"))
 
+# Get database name first
+DB_NAME = get_db_name_from_conn(DB_CONN)
+
 # Optional environment variables with defaults and validation
-JOB_NAME = os.getenv("JOB_NAME", f"{sanitize_name(get_db_name_from_conn(DB_CONN))}_{sanitize_name(TABLE_NAME)}")
+JOB_NAME = os.getenv("JOB_NAME", f"{sanitize_name(DB_NAME)}_{sanitize_name(TABLE_NAME)}")
 DB_TIMEOUT = validate_numeric_param("DB_TIMEOUT", os.getenv("DB_TIMEOUT", str(DEFAULT_TIMEOUT)))
 HTTP_TIMEOUT = validate_numeric_param("HTTP_TIMEOUT", os.getenv("HTTP_TIMEOUT", str(DEFAULT_TIMEOUT)))
 MAX_RETRIES = validate_numeric_param("MAX_RETRIES", os.getenv("MAX_RETRIES", str(DEFAULT_MAX_RETRIES)))
 RETRY_DELAY = validate_numeric_param("RETRY_DELAY", os.getenv("RETRY_DELAY", str(DEFAULT_RETRY_DELAY)))
+MAX_ROWS = validate_numeric_param("MAX_ROWS", os.getenv("MAX_ROWS", str(DEFAULT_MAX_ROWS)))
+
+# Setup logger after all variables are initialized
+logger = setup_logger()
+
+# Log environment parameters (excluding sensitive data)
+log_event("environment_initialized", params={
+    "table_name": TABLE_NAME,
+    "pushgateway_url": PUSHGATEWAY_URL,
+    "id_field": ID_FIELD,
+    "value_field": VALUE_FIELD,
+    "updatedon_field": UPDATEDON_FIELD,
+    "job_name": JOB_NAME,
+    "db_timeout": DB_TIMEOUT,
+    "http_timeout": HTTP_TIMEOUT,
+    "max_retries": MAX_RETRIES,
+    "retry_delay": RETRY_DELAY,
+    "max_rows": MAX_ROWS
+})
 
 # Sanitized names for metrics
-DB_NAME = get_db_name_from_conn(DB_CONN)
 DB_NAME_S = sanitize_name(DB_NAME)
 TABLE_NAME_S = sanitize_name(TABLE_NAME)
-
-# Metric names
-DB_CONNECT_SUCCESS_METRIC = 'db_connect_success'
-DB_CONNECTION_DURATION_METRIC = 'db_connection_duration_seconds'
-ROWS_COUNT_METRIC = 'rows_count'
-VALUE_METRIC = 'value'
-UPDATEDON_METRIC = 'updatedon'
-SCRAPE_SUCCESS_METRIC = 'scrape_success'
-SKIPPED_ROWS_METRIC = 'skipped_rows'
-SCRAPE_DURATION_METRIC = 'scrape_duration_seconds'
-LAST_SUCCESSFUL_SCRAPE_METRIC = 'last_successful_scrape_timestamp'
-PUSH_ERRORS_METRIC = 'push_errors_total'
 
 # SQL query using psycopg2.sql for safe identifier handling
 QUERY = sql.SQL("SELECT {id}, {val}, {upd} FROM {tbl}").format(
@@ -321,11 +367,13 @@ def fetch_rows(conn: psycopg2.extensions.connection) -> List[Tuple]:
                 SELECT {id_field}, {value_field}, {updatedon_field}
                 FROM {table}
                 ORDER BY {updatedon_field} DESC
+                LIMIT {limit}
             """).format(
                 id_field=sql.Identifier(ID_FIELD),
                 value_field=sql.Identifier(VALUE_FIELD),
                 updatedon_field=sql.Identifier(UPDATEDON_FIELD),
-                table=sql.Identifier(TABLE_NAME)
+                table=sql.Identifier(TABLE_NAME),
+                limit=sql.Literal(MAX_ROWS)
             )
             cur.execute(query)
             return cur.fetchall()
@@ -372,20 +420,35 @@ def timestamp_to_unix_seconds(ts: Union[str, datetime, None]) -> Optional[float]
     """
     if ts is None:
         return None
+        
     if isinstance(ts, datetime):
         return ts.timestamp()
+        
     if isinstance(ts, str):
+        # Try parsing as ISO format
         try:
             dt = datetime.fromisoformat(ts)
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
             return dt.timestamp()
         except ValueError:
-            return None
-    try:
-        return float(ts)
-    except (ValueError, TypeError):
-        return None
+            pass
+            
+        # Try parsing as Unix timestamp
+        try:
+            return float(ts)
+        except ValueError:
+            pass
+            
+        # Try common date formats
+        for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f']:
+            try:
+                dt = datetime.strptime(ts, fmt)
+                return dt.replace(tzinfo=timezone.utc).timestamp()
+            except ValueError:
+                continue
+                
+    return None
 
 def format_metric_line(name: str, labels: str, value: Any) -> str:
     """Format a single Prometheus metric line.
@@ -434,7 +497,7 @@ def generate_metrics_text(rows: List[Tuple], duration: float, db_connection_dura
     """
     labels = get_metric_labels(JOB_NAME)
     skipped_rows = 0
-    lines = generate_help_and_type()
+    lines = METRIC_HELP_AND_TYPE.copy()
 
     for row in rows:
         if len(row) != 3:
@@ -451,7 +514,7 @@ def generate_metrics_text(rows: List[Tuple], duration: float, db_connection_dura
             continue
 
         id_str = escape_label_value(id_value)
-        # Compose labels per metric
+        # Compose labels per metric without spaces
         per_row_labels = f'id="{id_str}"'
         # For possible extra labels, if any, they are already included in base labels
 
@@ -471,7 +534,7 @@ def generate_metrics_text(rows: List[Tuple], duration: float, db_connection_dura
             continue
 
         # Compose full labels string including base labels and per-row labels
-        full_labels = ",".join([labels, per_row_labels])
+        full_labels = f"{labels},{per_row_labels}"
 
         lines.append(format_metric_line(ROWS_COUNT_METRIC, full_labels, 1))
         lines.append(format_metric_line(VALUE_METRIC, full_labels, val_num))
@@ -498,8 +561,16 @@ def push_metrics(pushgateway_url: str, job_name: str, metrics_text: str) -> None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             response = requests.put(url, data=metrics_text.encode('utf-8'), headers=headers, timeout=HTTP_TIMEOUT)
-            if response.status_code == 202:
+            if response.status_code >= 200 and response.status_code < 300:
                 logger.info(f"Metrics pushed successfully to {url}")
+                # Push error metrics separately if there were any errors
+                if push_errors > 0:
+                    error_metrics = f'\n{PUSH_ERRORS_METRIC}{{{get_metric_labels(JOB_NAME)}}} {push_errors}\n'
+                    error_url = f"{pushgateway_url}/metrics/job/{job_name}/instance/errors"
+                    try:
+                        requests.put(error_url, data=error_metrics.encode('utf-8'), headers=headers, timeout=HTTP_TIMEOUT)
+                    except requests.RequestException as e:
+                        logger.warning(f"Failed to push error metrics: {e}")
                 return
             else:
                 logger.warning(f"Unexpected response status {response.status_code} from PushGateway: {response.text}")
