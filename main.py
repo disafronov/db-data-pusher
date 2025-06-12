@@ -33,6 +33,7 @@ def main():
         DB_USER = os.getenv("DB_USER")
         DB_PASS = os.getenv("DB_PASS")
         DB_PORT = int(os.getenv("DB_PORT") or "5432")
+        DB_TIMEOUT = int(os.getenv("DB_TIMEOUT") or "5")
         TABLE_NAME = os.getenv("TABLE_NAME")
         ID_COLUMN = os.getenv("ID_COLUMN") or "id"
         VALUE_COLUMN = os.getenv("VALUE_COLUMN") or "value"
@@ -62,7 +63,12 @@ def main():
             sql.Identifier(TABLE_NAME),
         )
         with psycopg2.connect(
-            host=DB_HOST, port=DB_PORT, dbname=DB_NAME, user=DB_USER, password=DB_PASS
+            host=DB_HOST,
+            port=DB_PORT,
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASS,
+            connect_timeout=DB_TIMEOUT
         ) as conn:
             with conn.cursor() as cur:
                 cur.execute(query)
