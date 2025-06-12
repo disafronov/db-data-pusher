@@ -53,12 +53,12 @@ def fetch_rows(conn):
 
 def push_metrics(rows):
     metrics = ""
-    metrics += f'db_table_rows_count{{table="{TABLE_NAME}"}} {len(rows)}\n'
+    metrics += f'{TABLE_NAME}_rows_count {len(rows)}\n'
 
     for id_, value, updatedon in rows:
         updatedon_ts = int(updatedon.timestamp())
-        metrics += f'db_table_value{{table="{TABLE_NAME}",{ID_FIELD}="{id_}"}} {value}\n'
-        metrics += f'db_table_updatedon_seconds{{table="{TABLE_NAME}",{ID_FIELD}="{id_}"}} {updatedon_ts}\n'
+        metrics += f'{TABLE_NAME}_value{{{ID_FIELD}="{id_}"}} {value}\n'
+        metrics += f'{TABLE_NAME}_updatedon_seconds{{{ID_FIELD}="{id_}"}} {updatedon_ts}\n'
 
     response = requests.post(PUSHGATEWAY_URL, data=metrics.encode('utf-8'))
     return response
@@ -72,7 +72,7 @@ def main():
     try:
         rows = fetch_rows(conn)
     except Exception:
-        fail_and_exit("Failed to fetch data from database table", exc_info=True)
+        fail_and_exit(f"Failed to fetch data from table '{TABLE_NAME}'", exc_info=True)
 
     try:
         response = push_metrics(rows)
@@ -81,7 +81,7 @@ def main():
     except Exception:
         fail_and_exit("Failed to push metrics to PushGateway", exc_info=True)
 
-    logger.info(f"Successfully processed {len(rows)} rows")
+    logger.info(f"Successfully processed {len(rows)} rows from table '{TABLE_NAME}'")
 
 if __name__ == "__main__":
     main()
