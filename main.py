@@ -43,6 +43,7 @@ from typing import List, Tuple, Optional, Any, Union, Callable
 from psycopg2 import sql
 import signal
 from decimal import Decimal
+from requests.utils import quote
 
 # Constants
 DEFAULT_TIMEOUT = 5
@@ -306,7 +307,7 @@ TABLE_NAME = validate_sql_identifier(get_env_or_exit("TABLE_NAME"))
 PUSHGATEWAY_URL = get_env_or_exit("PUSHGATEWAY_URL")
 ID_FIELD = validate_sql_identifier(get_env_or_exit("ID_FIELD"))
 VALUE_FIELD = validate_sql_identifier(get_env_or_exit("VALUE_FIELD"))
-UPDATEDON_FIELD = validate_env_or_exit("UPDATEDON_FIELD")
+UPDATEDON_FIELD = validate_sql_identifier(get_env_or_exit("UPDATEDON_FIELD"))
 
 # Get database name first
 DB_NAME = get_db_name_from_conn(DB_CONN)
@@ -379,35 +380,6 @@ def fetch_rows(conn: psycopg2.extensions.connection) -> List[Tuple]:
             return cur.fetchall()
     except Exception as e:
         fail_and_exit(f"Failed to fetch rows from table {TABLE_NAME}", e)
-
-def generate_help_and_type() -> List[str]:
-    """Generate HELP and TYPE comments for all metrics.
-    
-    Returns:
-        List of HELP and TYPE comments for all metrics
-    """
-    return [
-        f'# HELP {DB_CONNECT_SUCCESS_METRIC} Whether the database connection was successful',
-        f'# TYPE {DB_CONNECT_SUCCESS_METRIC} gauge',
-        f'# HELP {DB_CONNECTION_DURATION_METRIC} Time taken to connect to the database in seconds',
-        f'# TYPE {DB_CONNECTION_DURATION_METRIC} gauge',
-        f'# HELP {ROWS_COUNT_METRIC} Number of rows fetched',
-        f'# TYPE {ROWS_COUNT_METRIC} gauge',
-        f'# HELP {VALUE_METRIC} Value field from database',
-        f'# TYPE {VALUE_METRIC} gauge',
-        f'# HELP {UPDATEDON_METRIC} Timestamp of last update (Unix timestamp)',
-        f'# TYPE {UPDATEDON_METRIC} gauge',
-        f'# HELP {SCRAPE_SUCCESS_METRIC} Whether scraping was successful',
-        f'# TYPE {SCRAPE_SUCCESS_METRIC} gauge',
-        f'# HELP {SKIPPED_ROWS_METRIC} Number of rows skipped due to parsing errors',
-        f'# TYPE {SKIPPED_ROWS_METRIC} gauge',
-        f'# HELP {SCRAPE_DURATION_METRIC} Duration of scraping in seconds',
-        f'# TYPE {SCRAPE_DURATION_METRIC} gauge',
-        f'# HELP {LAST_SUCCESSFUL_SCRAPE_METRIC} Timestamp of last successful scrape',
-        f'# TYPE {LAST_SUCCESSFUL_SCRAPE_METRIC} gauge',
-        f'# HELP {PUSH_ERRORS_METRIC} Total number of push errors',
-        f'# TYPE {PUSH_ERRORS_METRIC} counter',
-    ]
 
 def timestamp_to_unix_seconds(ts: Union[str, datetime, None]) -> Optional[float]:
     """Convert timestamp to Unix seconds (float).
@@ -554,7 +526,7 @@ def push_metrics(pushgateway_url: str, job_name: str, metrics_text: str) -> None
     Raises:
         SystemExit: If push fails after retries
     """
-    url = f"{pushgateway_url}/metrics/job/{job_name}"
+    url = f"{pushgateway_url}/metrics/job/{quote(job_name)}"
     headers = {'Content-Type': PROMETHEUS_CONTENT_TYPE}
     push_errors = 0
 
@@ -566,7 +538,7 @@ def push_metrics(pushgateway_url: str, job_name: str, metrics_text: str) -> None
                 # Push error metrics separately if there were any errors
                 if push_errors > 0:
                     error_metrics = f'\n{PUSH_ERRORS_METRIC}{{{get_metric_labels(JOB_NAME)}}} {push_errors}\n'
-                    error_url = f"{pushgateway_url}/metrics/job/{job_name}/instance/errors"
+                    error_url = f"{pushgateway_url}/metrics/job/{quote(job_name)}/instance/errors"
                     try:
                         requests.put(error_url, data=error_metrics.encode('utf-8'), headers=headers, timeout=HTTP_TIMEOUT)
                     except requests.RequestException as e:
@@ -605,32 +577,40 @@ def main() -> None:
     log_event("job_started")
     start_time = time.time()
 
-    # Connect to DB
-    db_connect_start = time.time()
     try:
-        conn = psycopg2.connect(DB_CONN, connect_timeout=DB_TIMEOUT)
-        db_connection_duration = time.time() - db_connect_start
-        log_event("db_connected", duration=db_connection_duration)
+        # Connect to DB
+        db_connect_start = time.time()
+        try:
+            conn = psycopg2.connect(DB_CONN, connect_timeout=DB_TIMEOUT)
+            db_connection_duration = time.time() - db_connect_start
+            log_event("db_connected", duration=db_connection_duration)
+        except Exception as e:
+            fail_and_exit("Failed to connect to database", e)
+
+        # Fetch rows
+        try:
+            rows = fetch_rows(conn)
+        finally:
+            conn.close()
+
+        scrape_duration = time.time() - start_time
+        log_event("data_fetched", row_count=len(rows), scrape_duration=scrape_duration)
+
+        # Generate metrics text
+        metrics_text, skipped_rows = generate_metrics_text(rows, scrape_duration, db_connection_duration)
+        log_event("metrics_generated", skipped_rows=skipped_rows)
+
+        # Push metrics to PushGateway
+        push_metrics(PUSHGATEWAY_URL, JOB_NAME, metrics_text)
+
+        log_event("job_finished", duration=time.time() - start_time)
+
+    except KeyboardInterrupt:
+        logger.info("KeyboardInterrupt received, exiting gracefully")
+        sys.exit(0)
     except Exception as e:
-        fail_and_exit("Failed to connect to database", e)
-
-    # Fetch rows
-    try:
-        rows = fetch_rows(conn)
-    finally:
-        conn.close()
-
-    scrape_duration = time.time() - start_time
-    log_event("data_fetched", row_count=len(rows), scrape_duration=scrape_duration)
-
-    # Generate metrics text
-    metrics_text, skipped_rows = generate_metrics_text(rows, scrape_duration, db_connection_duration)
-    log_event("metrics_generated", skipped_rows=skipped_rows)
-
-    # Push metrics to PushGateway
-    push_metrics(PUSHGATEWAY_URL, JOB_NAME, metrics_text)
-
-    log_event("job_finished", duration=time.time() - start_time)
+        log_event("job_failed", error=str(e), duration=time.time() - start_time, exc_info=True)
+        raise
 
 if __name__ == "__main__":
     main()
