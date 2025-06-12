@@ -1,0 +1,12 @@
+[project]
+name = "db-data-pusher"
+version = "0.1.0"
+description = "Push data from PostgreSQL table to PushGateway"
+requires-python = ">=3.9"
+
+[tool.uv]
+python = "3.13"
+
+[tool.uv.dependencies]
+psycopg2-binary = "2.9.9"
+requests = "2.31.0" 
