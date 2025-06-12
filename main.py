@@ -45,6 +45,7 @@ def main():
         ID_COLUMN = os.getenv("ID_COLUMN", "id")
         VALUE_COLUMN = os.getenv("VALUE_COLUMN", "value")
         UPDATEDON_COLUMN = os.getenv("UPDATEDON_COLUMN", "updatedon")
+        HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "10"))
         DEFAULT_NAME = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
         JOB_NAME = sanitize(os.getenv("JOB_NAME", DEFAULT_NAME))
         INSTANCE_NAME = sanitize(os.getenv("INSTANCE_NAME", JOB_NAME))
@@ -116,7 +117,7 @@ def main():
             # Push metrics
             url = f"{PUSHGATEWAY_URL}/metrics/job/{JOB_NAME}/instance/{INSTANCE_NAME}"
             logger.info(f"Pushing metrics to: {url}")
-            response = requests.post(url, data="\n".join(lines) + "\n")
+            response = requests.post(url, data="\n".join(lines) + "\n", timeout=HTTP_TIMEOUT)
             response.raise_for_status()
 
             logger.info(f"Pushed {metrics_count} metrics")
