@@ -23,6 +23,14 @@ def sanitize(name: str) -> str:
     """Replace non-alphanumeric chars with underscore."""
     return re.sub(r'[^a-zA-Z0-9_]', '_', str(name))
 
+def sanitize_error(error: str) -> str:
+    """Remove database password from error messages."""
+    # Handle different quote styles in password errors
+    error = re.sub(r'password=([^"\s\']+)', 'password=***', error)
+    error = re.sub(r'password="([^"]+)"', 'password="***"', error)
+    error = re.sub(r"password='([^']+)'", "password='***'", error)
+    return error
+
 def main():
     try:
         # Get required env vars
@@ -118,7 +126,7 @@ def main():
             conn.close()
 
     except Exception as e:
-        logger.error(f"Error: {str(e)}")
+        logger.error(f"Error: {sanitize_error(str(e))}")
         sys.exit(1)
 
 if __name__ == "__main__":
