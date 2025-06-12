@@ -93,12 +93,18 @@ class JsonFormatter(logging.Formatter):
         log_record = {
             "timestamp": timestamp,
             "level": record.levelname,
-            "message": record.getMessage(),
             "logger": record.name,
             "job": JOB_NAME,
             "db": DB_NAME,
             "table": TABLE_NAME,
         }
+        
+        # If message is already a dictionary, merge it with base fields
+        if isinstance(record.msg, dict):
+            log_record.update(record.msg)
+        else:
+            log_record["message"] = record.getMessage()
+            
         if record.exc_info:
             log_record["exception"] = self.formatException(record.exc_info)
         return json.dumps(log_record)
@@ -126,7 +132,7 @@ def log_event(event_type: str, **kwargs) -> None:
         "event": event_type,
         **kwargs
     }
-    logger.info(json.dumps(log_data))
+    logger.info(log_data)
 
 def fail_and_exit(message: str, exc_info: Optional[Exception] = None) -> None:
     """Log error and exit with status code 1.
@@ -298,29 +304,33 @@ def validate_numeric_param(name: str, value: str, min_val: int = 1, max_val: int
         fail_and_exit(f"Invalid {name}: {value}. Must be a number")
 
 def fetch_rows(conn: psycopg2.extensions.connection) -> List[Tuple]:
-    """Fetch rows from database with error handling and row limit.
+    """Fetch rows from the specified table.
     
     Args:
         conn: Database connection
         
     Returns:
-        List of tuples containing row data, limited to MAX_ROWS
+        List of tuples containing row data
         
     Raises:
-        SystemExit: If database error occurs
+        SystemExit: If query fails
     """
     try:
         with conn.cursor() as cur:
-            cur.execute(QUERY)
-            rows = cur.fetchall()
-            if len(rows) > MAX_ROWS:
-                logger.warning(f"Too many rows ({len(rows)}), limiting to {MAX_ROWS}")
-                return rows[:MAX_ROWS]
-            return rows
-    except psycopg2.Error as e:
-        fail_and_exit(f"Database error while fetching rows: {e}", exc_info=True)
+            query = sql.SQL("""
+                SELECT {id_field}, {value_field}, {updatedon_field}
+                FROM {table}
+                ORDER BY {updatedon_field} DESC
+            """).format(
+                id_field=sql.Identifier(ID_FIELD),
+                value_field=sql.Identifier(VALUE_FIELD),
+                updatedon_field=sql.Identifier(UPDATEDON_FIELD),
+                table=sql.Identifier(TABLE_NAME)
+            )
+            cur.execute(query)
+            return cur.fetchall()
     except Exception as e:
-        fail_and_exit(f"Unexpected error while fetching rows: {e}", exc_info=True)
+        fail_and_exit(f"Failed to fetch rows from table {TABLE_NAME}", e)
 
 def generate_help_and_type() -> List[str]:
     """Generate HELP and TYPE comments for all metrics.
