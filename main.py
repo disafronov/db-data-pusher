@@ -5,7 +5,6 @@ Push database metrics to Prometheus PushGateway.
 
 import os
 import sys
-import time
 import psycopg2
 import requests
 import re
@@ -15,15 +14,6 @@ from datetime import datetime
 def sanitize(name: str) -> str:
     """Replace non-alphanumeric chars with underscore."""
     return re.sub(r'[^a-zA-Z0-9_]', '_', str(name))
-
-def delete_old_metrics(pushgateway_url: str, job: str) -> None:
-    """Delete old metrics for the given job across all instances."""
-    url = f"{pushgateway_url}/metrics/job/{job}"
-    try:
-        requests.delete(url)
-        print(f"Deleted old metrics for job={job}")
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to delete old metrics: {e}")
 
 def main():
     # Get required env vars
@@ -37,6 +27,9 @@ def main():
     ID_COLUMN = os.getenv("ID_COLUMN", "id")
     VALUE_COLUMN = os.getenv("VALUE_COLUMN", "value")
     UPDATEDON_COLUMN = os.getenv("UPDATEDON_COLUMN", "updatedon")
+    DEFAULT_NAME = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
+    JOB_NAME = sanitize(os.getenv("JOB_NAME", DEFAULT_NAME))
+    INSTANCE_NAME = sanitize(os.getenv("INSTANCE_NAME", JOB_NAME))
 
     # Connect to DB
     conn = psycopg2.connect(
@@ -55,9 +48,9 @@ def main():
     rows = cur.fetchall()
 
     # Build metrics
-    value_metric = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}_value"
-    updatedon_metric = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}_updatedon"
-    count_metric = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}_total_rows"
+    value_metric = f"{DEFAULT_NAME}_value"
+    updatedon_metric = f"{DEFAULT_NAME}_updatedon"
+    count_metric = f"{DEFAULT_NAME}_total_rows"
     lines = [
         f"# HELP {value_metric} Value from {TABLE_NAME}",
         f"# TYPE {value_metric} gauge",
@@ -83,12 +76,8 @@ def main():
             lines.append(f'{updatedon_metric}{{id="{sanitized_id}"}} {updatedon_ts}')
             metrics_count += 1
 
-    # Delete old metrics before pushing new ones
-    job_name = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
-    delete_old_metrics(PUSHGATEWAY_URL, job_name)
-
     # Push metrics
-    url = f"{PUSHGATEWAY_URL}/metrics/job/{job_name}/instance/{sanitize(INSTANCE)}"
+    url = f"{PUSHGATEWAY_URL}/metrics/job/{JOB_NAME}/instance/{INSTANCE_NAME}"
     requests.post(url, data="\n".join(lines) + "\n")
 
     print(f"Pushed {metrics_count} metrics")
