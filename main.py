@@ -29,33 +29,28 @@ def main():
     try:
         # Database configuration
         DB_HOST = os.getenv("DB_HOST")
+        DB_PORT = int(os.getenv("DB_PORT") or "5432")
         DB_NAME = os.getenv("DB_NAME")
         DB_USER = os.getenv("DB_USER")
         DB_PASS = os.getenv("DB_PASS")
-        DB_PORT = int(os.getenv("DB_PORT") or "5432")
         DB_TIMEOUT = int(os.getenv("DB_TIMEOUT") or "5")
-
-        # Table configuration
-        TABLE_NAME = os.getenv("TABLE_NAME")
-        ID_COLUMN = os.getenv("ID_COLUMN") or "id"
-        VALUE_COLUMN = os.getenv("VALUE_COLUMN") or "value"
-        UPDATEDON_COLUMN = os.getenv("UPDATEDON_COLUMN") or "updatedon"
+        DB_TABLE = os.getenv("DB_TABLE")
+        DB_TABLE_COLUMN_ID = os.getenv("DB_TABLE_COLUMN_ID") or "id"
+        DB_TABLE_COLUMN_VALUE = os.getenv("DB_TABLE_COLUMN_VALUE") or "value"
+        DB_TABLE_COLUMN_UPDATEDON = os.getenv("DB_TABLE_COLUMN_UPDATEDON") or "updatedon"
 
         # PushGateway configuration
         PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL")
-        HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT") or "10")
-
-        # Metric names configuration
-        DEFAULT_NAME = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
-        JOB_NAME = sanitize(os.getenv("JOB_NAME") or DEFAULT_NAME)
-        INSTANCE_NAME = sanitize(os.getenv("INSTANCE_NAME") or JOB_NAME)
+        PUSHGATEWAY_TIMEOUT = int(os.getenv("PUSHGATEWAY_TIMEOUT") or "10")
+        PUSHGATEWAY_JOB = os.getenv("PUSHGATEWAY_JOB")
+        PUSHGATEWAY_INSTANCE = os.getenv("PUSHGATEWAY_INSTANCE")
 
         required = {
             "DB_HOST": DB_HOST,
             "DB_NAME": DB_NAME,
             "DB_USER": DB_USER,
             "DB_PASS": DB_PASS,
-            "TABLE_NAME": TABLE_NAME,
+            "DB_TABLE": DB_TABLE,
             "PUSHGATEWAY_URL": PUSHGATEWAY_URL,
         }
         missing = [k for k, v in required.items() if not v]
@@ -64,10 +59,10 @@ def main():
 
         # Connect to database and execute query
         query = sql.SQL("SELECT {}, {}, {} FROM {}").format(
-            sql.Identifier(ID_COLUMN),
-            sql.Identifier(VALUE_COLUMN),
-            sql.Identifier(UPDATEDON_COLUMN),
-            sql.Identifier(TABLE_NAME),
+            sql.Identifier(DB_TABLE_COLUMN_ID),
+            sql.Identifier(DB_TABLE_COLUMN_VALUE),
+            sql.Identifier(DB_TABLE_COLUMN_UPDATEDON),
+            sql.Identifier(DB_TABLE),
         )
         with psycopg2.connect(
             host=DB_HOST,
@@ -82,10 +77,14 @@ def main():
                 rows = cur.fetchall()
 
         # Build metrics
+        DEFAULT_NAME = f"{sanitize(DB_NAME)}_{sanitize(DB_TABLE)}"
+        JOB_NAME = sanitize(PUSHGATEWAY_JOB or DEFAULT_NAME)
+        INSTANCE_NAME = sanitize(PUSHGATEWAY_INSTANCE or JOB_NAME)
+
         metrics = {
-            "value": {"type": "gauge", "help": f"Value from {TABLE_NAME}"},
-            "updatedon": {"type": "gauge", "help": f"Last update timestamp from {TABLE_NAME}"},
-            "total_rows": {"type": "gauge", "help": f"Total rows in {TABLE_NAME}"},
+            "value": {"type": "gauge", "help": f"Value from {DB_TABLE}"},
+            "updatedon": {"type": "gauge", "help": f"Last update timestamp from {DB_TABLE}"},
+            "total_rows": {"type": "gauge", "help": f"Total rows in {DB_TABLE}"},
         }
 
         lines = []
@@ -111,7 +110,7 @@ def main():
         # Push metrics
         url = f"{PUSHGATEWAY_URL}/metrics/job/{JOB_NAME}/instance/{INSTANCE_NAME}"
         logger.info(f"Pushing {count} metrics to {url}")
-        response = requests.post(url, data="\n".join(lines) + "\n", timeout=HTTP_TIMEOUT)
+        response = requests.post(url, data="\n".join(lines) + "\n", timeout=PUSHGATEWAY_TIMEOUT)
         response.raise_for_status()
         logger.info("Metrics pushed successfully")
 
