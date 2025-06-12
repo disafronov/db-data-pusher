@@ -24,6 +24,7 @@ def main():
     DB_PASS = os.getenv("DB_PASS")
     TABLE_NAME = os.getenv("TABLE_NAME")
     PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL")
+    INSTANCE = os.getenv("INSTANCE")
     ID_COLUMN = os.getenv("ID_COLUMN", "id")
     VALUE_COLUMN = os.getenv("VALUE_COLUMN", "value")
     UPDATEDON_COLUMN = os.getenv("UPDATEDON_COLUMN", "updatedon")
@@ -62,18 +63,19 @@ def main():
 
     metrics_count = 1  # Start with total_rows metric
     for id_, value, updatedon in rows:
-        if value is None:
-            continue
         sanitized_id = sanitize(id_)
-        lines.append(f'{value_metric}{{id="{sanitized_id}"}} {value}')
-        metrics_count += 1
+        # Send value metric if value is not None (including zero)
+        if value is not None:
+            lines.append(f'{value_metric}{{id="{sanitized_id}"}} {value}')
+            metrics_count += 1
+        # Send updatedon metric only if updatedon is not None
         if updatedon is not None:
             updatedon_ts = int(updatedon.timestamp())
             lines.append(f'{updatedon_metric}{{id="{sanitized_id}"}} {updatedon_ts}')
             metrics_count += 1
 
     # Push metrics
-    url = f"{PUSHGATEWAY_URL}/metrics/job/{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
+    url = f"{PUSHGATEWAY_URL}/metrics/job/{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}/instance/{sanitize(INSTANCE)}"
     requests.post(url, data="\n".join(lines) + "\n")
 
     print(f"Pushed {metrics_count} metrics")
