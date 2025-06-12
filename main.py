@@ -33,22 +33,22 @@ def sanitize_error(error: str) -> str:
 
 def main():
     try:
-        # Get required env vars
+        # Database configuration
         DB_HOST = os.getenv("DB_HOST")
         DB_NAME = os.getenv("DB_NAME")
         DB_USER = os.getenv("DB_USER")
         DB_PASS = os.getenv("DB_PASS")
         DB_PORT = int(os.getenv("DB_PORT", "5432"))
+
+        # Table configuration
         TABLE_NAME = os.getenv("TABLE_NAME")
-        PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL")
-        INSTANCE = os.getenv("INSTANCE")
         ID_COLUMN = os.getenv("ID_COLUMN", "id")
         VALUE_COLUMN = os.getenv("VALUE_COLUMN", "value")
         UPDATEDON_COLUMN = os.getenv("UPDATEDON_COLUMN", "updatedon")
+
+        # PushGateway configuration
+        PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL")
         HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "10"))
-        DEFAULT_NAME = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
-        JOB_NAME = sanitize(os.getenv("JOB_NAME", DEFAULT_NAME))
-        INSTANCE_NAME = sanitize(os.getenv("INSTANCE_NAME", JOB_NAME))
 
         # Validate required environment variables
         required_env = {
@@ -57,13 +57,20 @@ def main():
             "DB_USER": DB_USER,
             "DB_PASS": DB_PASS,
             "TABLE_NAME": TABLE_NAME,
-            "PUSHGATEWAY_URL": PUSHGATEWAY_URL,
-            "INSTANCE": INSTANCE
+            "PUSHGATEWAY_URL": PUSHGATEWAY_URL
         }
 
         missing = [k for k, v in required_env.items() if not v]
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+
+        # Metric names configuration
+        DEFAULT_NAME = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
+        JOB_NAME = sanitize(os.getenv("JOB_NAME", DEFAULT_NAME))
+        INSTANCE_NAME = sanitize(os.getenv("INSTANCE_NAME", JOB_NAME))
+
+        if not JOB_NAME or not INSTANCE_NAME:
+            raise ValueError("JOB_NAME and INSTANCE_NAME cannot be empty after sanitization")
 
         # Connect to DB
         conn = psycopg2.connect(
@@ -103,7 +110,15 @@ def main():
 
             metrics_count = 1  # Start with total_rows metric
             for id_, value, updatedon in rows:
+                if not id_:
+                    logger.warning("Skipping row with empty ID")
+                    continue
+
                 sanitized_id = sanitize(str(id_))
+                if not sanitized_id:
+                    logger.warning(f"Skipping row with empty ID after sanitization: {id_}")
+                    continue
+
                 # Send value metric if value is not None (including zero)
                 if value is not None:
                     lines.append(f'{value_metric}{{id="{sanitized_id}"}} {value}')
