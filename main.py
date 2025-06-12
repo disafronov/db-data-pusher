@@ -27,21 +27,27 @@ def sanitize_error(error: str) -> str:
 
 def main():
     try:
-        # Load and validate configuration
+        # Database configuration
         DB_HOST = os.getenv("DB_HOST")
         DB_NAME = os.getenv("DB_NAME")
         DB_USER = os.getenv("DB_USER")
         DB_PASS = os.getenv("DB_PASS")
         DB_PORT = int(os.getenv("DB_PORT") or "5432")
         DB_TIMEOUT = int(os.getenv("DB_TIMEOUT") or "5")
+
+        # Table configuration
         TABLE_NAME = os.getenv("TABLE_NAME")
         ID_COLUMN = os.getenv("ID_COLUMN") or "id"
         VALUE_COLUMN = os.getenv("VALUE_COLUMN") or "value"
         UPDATEDON_COLUMN = os.getenv("UPDATEDON_COLUMN") or "updatedon"
+
+        # PushGateway configuration
         PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL")
+        HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT") or "10")
+
+        # Metric names configuration
         JOB_NAME = sanitize(os.getenv("JOB_NAME") or f"{DB_NAME}_{TABLE_NAME}")
         INSTANCE_NAME = sanitize(os.getenv("INSTANCE_NAME") or JOB_NAME)
-        HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT") or "10")
 
         required = {
             "DB_HOST": DB_HOST,
