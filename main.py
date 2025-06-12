@@ -4,6 +4,7 @@ import psycopg2
 import requests
 import logging
 import json
+import re
 
 class JsonFormatter(logging.Formatter):
     def format(self, record):
@@ -39,7 +40,14 @@ def get_env_or_exit(var_name):
         fail_and_exit(f"Failed to get required environment variable '{var_name}'")
     return value
 
+def get_db_name_from_conn(conn_string):
+    match = re.search(r'dbname=([^ ]+)', conn_string)
+    if not match:
+        fail_and_exit("Failed to extract database name from connection string")
+    return match.group(1)
+
 DB_CONN = get_env_or_exit("DB_CONN")
+DB_NAME = get_db_name_from_conn(DB_CONN)
 TABLE_NAME = get_env_or_exit("TABLE_NAME")
 PUSHGATEWAY_URL = get_env_or_exit("PUSHGATEWAY_URL")
 ID_FIELD = get_env_or_exit("ID_FIELD")
@@ -53,12 +61,12 @@ def fetch_rows(conn):
 
 def push_metrics(rows):
     metrics = ""
-    metrics += f'{TABLE_NAME}_rows_count {len(rows)}\n'
+    metrics += f'{DB_NAME}_{TABLE_NAME}_rows_count {len(rows)}\n'
 
     for id_, value, updatedon in rows:
         updatedon_ts = int(updatedon.timestamp())
-        metrics += f'{TABLE_NAME}_value{{{ID_FIELD}="{id_}"}} {value}\n'
-        metrics += f'{TABLE_NAME}_updatedon_seconds{{{ID_FIELD}="{id_}"}} {updatedon_ts}\n'
+        metrics += f'{DB_NAME}_{TABLE_NAME}_value{{{ID_FIELD}="{id_}"}} {value}\n'
+        metrics += f'{DB_NAME}_{TABLE_NAME}_updatedon_seconds{{{ID_FIELD}="{id_}"}} {updatedon_ts}\n'
 
     response = requests.post(PUSHGATEWAY_URL, data=metrics.encode('utf-8'))
     return response
@@ -67,21 +75,21 @@ def main():
     try:
         conn = psycopg2.connect(DB_CONN)
     except Exception:
-        fail_and_exit("Failed to establish database connection", exc_info=True)
+        fail_and_exit(f"Failed to establish database connection to '{DB_NAME}'", exc_info=True)
 
     try:
         rows = fetch_rows(conn)
     except Exception:
-        fail_and_exit(f"Failed to fetch data from table '{TABLE_NAME}'", exc_info=True)
+        fail_and_exit(f"Failed to fetch data from table '{TABLE_NAME}' in database '{DB_NAME}'", exc_info=True)
 
     try:
         response = push_metrics(rows)
         if response.status_code != 202:
-            fail_and_exit(f"Failed to push metrics to PushGateway: HTTP {response.status_code}, response: {response.text}")
+            fail_and_exit(f"Failed to push metrics to PushGateway for database '{DB_NAME}': HTTP {response.status_code}, response: {response.text}")
     except Exception:
-        fail_and_exit("Failed to push metrics to PushGateway", exc_info=True)
+        fail_and_exit(f"Failed to push metrics to PushGateway for database '{DB_NAME}'", exc_info=True)
 
-    logger.info(f"Successfully processed {len(rows)} rows from table '{TABLE_NAME}'")
+    logger.info(f"Successfully processed {len(rows)} rows from table '{TABLE_NAME}' in database '{DB_NAME}'")
 
 if __name__ == "__main__":
     main()
