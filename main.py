@@ -60,20 +60,23 @@ def main():
     # Add total rows count metric
     lines.append(f'{count_metric} {len(rows)}')
 
+    metrics_count = 1  # Start with total_rows metric
     for id_, value, updatedon in rows:
         if value is None:
             continue
         sanitized_id = sanitize(id_)
         lines.append(f'{value_metric}{{id="{sanitized_id}"}} {value}')
+        metrics_count += 1
         if updatedon is not None:
             updatedon_ts = int(updatedon.timestamp())
             lines.append(f'{updatedon_metric}{{id="{sanitized_id}"}} {updatedon_ts}')
+            metrics_count += 1
 
     # Push metrics
     url = f"{PUSHGATEWAY_URL}/metrics/job/{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
     requests.post(url, data="\n".join(lines) + "\n")
 
-    print(f"Pushed {len(rows)} metrics")
+    print(f"Pushed {metrics_count} metrics")
 
 if __name__ == "__main__":
     main() 
