@@ -41,7 +41,7 @@ def get_env_or_exit(var_name):
     return value
 
 def get_db_name_from_conn(conn_string):
-    match = re.search(r'dbname=([^ ]+)', conn_string)
+    match = re.search(r'//[^/]+/([^/?]+)', conn_string)
     if not match:
         fail_and_exit("Failed to extract database name from connection string")
     return match.group(1)
