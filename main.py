@@ -22,6 +22,7 @@ def main():
         DB_NAME = os.getenv("DB_NAME")
         DB_USER = os.getenv("DB_USER")
         DB_PASS = os.getenv("DB_PASS")
+        DB_PORT = int(os.getenv("DB_PORT", "5432"))
         TABLE_NAME = os.getenv("TABLE_NAME")
         PUSHGATEWAY_URL = os.getenv("PUSHGATEWAY_URL")
         INSTANCE = os.getenv("INSTANCE")
@@ -34,8 +35,11 @@ def main():
 
         # Connect to DB
         conn = psycopg2.connect(
-            host=DB_HOST, port=int(os.getenv("DB_PORT", "5432")),
-            dbname=DB_NAME, user=DB_USER, password=DB_PASS
+            host=DB_HOST,
+            port=DB_PORT,
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASS
         )
         cur = conn.cursor()
 
