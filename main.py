@@ -102,7 +102,7 @@ def main():
 
             metrics_count = 1  # Start with total_rows metric
             for id_, value, updatedon in rows:
-                sanitized_id = sanitize(id_)
+                sanitized_id = sanitize(str(id_))
                 # Send value metric if value is not None (including zero)
                 if value is not None:
                     lines.append(f'{value_metric}{{id="{sanitized_id}"}} {value}')
