@@ -36,7 +36,7 @@ def fail_and_exit(message, exc_info=None):
 def get_env_or_exit(var_name):
     value = os.getenv(var_name)
     if not value:
-        fail_and_exit(f"Environment variable {var_name} is required but not set")
+        fail_and_exit(f"Failed to get required environment variable '{var_name}'")
     return value
 
 DB_CONN = get_env_or_exit("DB_CONN")
@@ -67,21 +67,21 @@ def main():
     try:
         conn = psycopg2.connect(DB_CONN)
     except Exception:
-        fail_and_exit("Database connection error", exc_info=True)
+        fail_and_exit("Failed to establish database connection", exc_info=True)
 
     try:
         rows = fetch_rows(conn)
     except Exception:
-        fail_and_exit("Error fetching data from DB", exc_info=True)
+        fail_and_exit("Failed to fetch data from database table", exc_info=True)
 
     try:
         response = push_metrics(rows)
         if response.status_code != 202:
-            fail_and_exit(f"PushGateway error: {response.status_code} {response.text}")
+            fail_and_exit(f"Failed to push metrics to PushGateway: HTTP {response.status_code}, response: {response.text}")
     except Exception:
-        fail_and_exit("Error pushing metrics to PushGateway", exc_info=True)
+        fail_and_exit("Failed to push metrics to PushGateway", exc_info=True)
 
-    logger.info(f"Successfully pushed {len(rows)} rows.")
+    logger.info(f"Successfully processed {len(rows)} rows")
 
 if __name__ == "__main__":
     main()
