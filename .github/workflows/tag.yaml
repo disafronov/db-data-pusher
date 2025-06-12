@@ -1,4 +1,4 @@
-name: "Release"
+name: "Tag"
 
 "on":
   push:
@@ -10,8 +10,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: "Release"
+  tag:
+    name: "Tag"
     runs-on: ubuntu-latest
     steps:
 
@@ -30,14 +30,14 @@ jobs:
           noVersionBumpBehavior: silent
           noNewCommitBehavior: silent
 
-      - name: Create Release
-        uses: ncipollo/release-action@v1.16.0
+      - name: Create tag
+        uses: actions/github-script@v5
         with:
-          allowUpdates: true
-          draft: false
-          makeLatest: true
-          commit: main
-          # token: ${{ secrets.GITHUB_TOKEN }}
-          name: ${{ steps.semver.outputs.next }}
-          tag: ${{ steps.semver.outputs.next }}
+          script: |
+            github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/${{ steps.semver.outputs.next }}',
+              sha: context.sha
+            })
         if: ${{ steps.semver.outputs.next != '' }}
