@@ -42,10 +42,13 @@ def get_env_or_exit(var_name):
 DB_CONN = get_env_or_exit("DB_CONN")
 TABLE_NAME = get_env_or_exit("TABLE_NAME")
 PUSHGATEWAY_URL = get_env_or_exit("PUSHGATEWAY_URL")
+ID_FIELD = get_env_or_exit("ID_FIELD")
+VALUE_FIELD = get_env_or_exit("VALUE_FIELD")
+UPDATEDON_FIELD = get_env_or_exit("UPDATEDON_FIELD")
 
 def fetch_rows(conn):
     with conn.cursor() as cur:
-        cur.execute(f"SELECT id, value, updatedon FROM {TABLE_NAME}")
+        cur.execute(f"SELECT {ID_FIELD}, {VALUE_FIELD}, {UPDATEDON_FIELD} FROM {TABLE_NAME}")
         return cur.fetchall()
 
 def push_metrics(rows):
@@ -54,8 +57,8 @@ def push_metrics(rows):
 
     for id_, value, updatedon in rows:
         updatedon_ts = int(updatedon.timestamp())
-        metrics += f'db_table_value{{table="{TABLE_NAME}",id="{id_}"}} {value}\n'
-        metrics += f'db_table_updatedon_seconds{{table="{TABLE_NAME}",id="{id_}"}} {updatedon_ts}\n'
+        metrics += f'db_table_value{{table="{TABLE_NAME}",{ID_FIELD}="{id_}"}} {value}\n'
+        metrics += f'db_table_updatedon_seconds{{table="{TABLE_NAME}",{ID_FIELD}="{id_}"}} {updatedon_ts}\n'
 
     response = requests.post(PUSHGATEWAY_URL, data=metrics.encode('utf-8'))
     return response
