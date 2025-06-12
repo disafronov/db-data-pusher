@@ -598,49 +598,39 @@ def signal_handler(signum, frame) -> None:
     sys.exit(0)
 
 def main() -> None:
-    """Main function that orchestrates DB fetching, metrics generation, and push."""
-    signal.signal(signal.SIGINT, signal_handler)
+    """Main function to fetch data from DB, generate metrics, and push to PushGateway."""
     signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
 
     log_event("job_started")
+    start_time = time.time()
 
-    start_scrape = time.time()
-
+    # Connect to DB
     db_connect_start = time.time()
-    conn = None
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            conn = psycopg2.connect(DB_CONN, connect_timeout=DB_TIMEOUT)
-            db_connection_duration = time.time() - db_connect_start
-            log_event("db_connected", duration=db_connection_duration)
-            break
-        except psycopg2.OperationalError as e:
-            logger.warning(f"Database connection attempt {attempt} failed: {e}")
-            if attempt == MAX_RETRIES:
-                fail_and_exit("Exceeded max retries connecting to DB", e)
-            sleep_time = RETRY_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 0.5)
-            logger.info(f"Retrying DB connection after {sleep_time:.2f} seconds...")
-            time.sleep(sleep_time)
-    else:
-        # If loop exhausted without break (should not happen due to fail_and_exit)
-        fail_and_exit("Failed to connect to DB")
+    try:
+        conn = psycopg2.connect(DB_CONN, connect_timeout=DB_TIMEOUT)
+        db_connection_duration = time.time() - db_connect_start
+        log_event("db_connected", duration=db_connection_duration)
+    except Exception as e:
+        fail_and_exit("Failed to connect to database", e)
 
+    # Fetch rows
     try:
         rows = fetch_rows(conn)
-        scrape_duration = time.time() - start_scrape
-
-        metrics_text, skipped_rows = generate_metrics_text(rows, scrape_duration, db_connection_duration)
-        log_event("metrics_generated", rows_fetched=len(rows), skipped_rows=skipped_rows)
-
-        push_metrics(PUSHGATEWAY_URL, JOB_NAME, metrics_text)
-
-        log_event("job_finished", duration=time.time() - start_scrape)
-    except Exception as e:
-        log_event("job_failed", error=str(e), duration=time.time() - start_scrape, exc_info=True)
-        raise
     finally:
-        if conn:
-            conn.close()
+        conn.close()
+
+    scrape_duration = time.time() - start_time
+    log_event("data_fetched", row_count=len(rows), scrape_duration=scrape_duration)
+
+    # Generate metrics text
+    metrics_text, skipped_rows = generate_metrics_text(rows, scrape_duration, db_connection_duration)
+    log_event("metrics_generated", skipped_rows=skipped_rows)
+
+    # Push metrics to PushGateway
+    push_metrics(PUSHGATEWAY_URL, JOB_NAME, metrics_text)
+
+    log_event("job_finished", duration=time.time() - start_time)
 
 if __name__ == "__main__":
     main()
