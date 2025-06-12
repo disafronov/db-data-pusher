@@ -46,7 +46,8 @@ def main():
         HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT") or "10")
 
         # Metric names configuration
-        JOB_NAME = sanitize(os.getenv("JOB_NAME") or f"{DB_NAME}_{TABLE_NAME}")
+        DEFAULT_NAME = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
+        JOB_NAME = sanitize(os.getenv("JOB_NAME") or DEFAULT_NAME)
         INSTANCE_NAME = sanitize(os.getenv("INSTANCE_NAME") or JOB_NAME)
 
         required = {
@@ -81,17 +82,20 @@ def main():
                 rows = cur.fetchall()
 
         # Build metrics
-        metric_prefix = f"{sanitize(DB_NAME)}_{sanitize(TABLE_NAME)}"
-        lines = [
-            f"# HELP {metric_prefix}_value Value from {TABLE_NAME}",
-            f"# TYPE {metric_prefix}_value gauge",
-            f"# HELP {metric_prefix}_updatedon Last update timestamp from {TABLE_NAME}",
-            f"# TYPE {metric_prefix}_updatedon gauge",
-            f"# HELP {metric_prefix}_total_rows Total rows in {TABLE_NAME}",
-            f"# TYPE {metric_prefix}_total_rows gauge",
-            f"{metric_prefix}_total_rows {len(rows)}"
-        ]
+        metrics = {
+            "value": {"type": "gauge", "help": f"Value from {TABLE_NAME}"},
+            "updatedon": {"type": "gauge", "help": f"Last update timestamp from {TABLE_NAME}"},
+            "total_rows": {"type": "gauge", "help": f"Total rows in {TABLE_NAME}"},
+        }
 
+        lines = []
+        for name, meta in metrics.items():
+            lines.extend([
+                f"# HELP {DEFAULT_NAME}_{name} {meta['help']}",
+                f"# TYPE {DEFAULT_NAME}_{name} {meta['type']}"
+            ])
+
+        lines.append(f"{DEFAULT_NAME}_total_rows {len(rows)}")
         count = 1  # total_rows metric
 
         for id_, value, updatedon in rows:
@@ -100,11 +104,11 @@ def main():
                 continue
             sid = sanitize(str(id_))
             if value is not None:
-                lines.append(f'{metric_prefix}_value{{id="{sid}"}} {value}')
+                lines.append(f'{DEFAULT_NAME}_value{{id="{sid}"}} {value}')
                 count += 1
             if updatedon and isinstance(updatedon, datetime):
                 ts = int(updatedon.timestamp())
-                lines.append(f'{metric_prefix}_updatedon{{id="{sid}"}} {ts}')
+                lines.append(f'{DEFAULT_NAME}_updatedon{{id="{sid}"}} {ts}')
                 count += 1
 
         # Push metrics
