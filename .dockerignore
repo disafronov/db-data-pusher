@@ -1,2 +1,5 @@
 *
+!/.python-version
 !/main.py
+!/uv.lock
+!/pyproject.toml
